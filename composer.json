@@ -1,0 +1,20 @@
+{
+  "name": "macwake/bvrpatch",
+  "description": "Patch part and net names in a BVR file",
+  "minimum-stability": "stable",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "Thomas Lamy",
+      "email": "thomas@macwake.de"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Macwake\\BvrPatch\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=8.2"
+  }
+}
