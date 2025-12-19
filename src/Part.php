@@ -13,7 +13,7 @@ class Part
     public string $package;
     public string $outlineType;
     public array $outlineRelative;
-    /** @var Pin[] */
+    /** @var array<string,Pin> */
     public array $pins = [];
 
     public function __construct(
@@ -85,5 +85,13 @@ class Part
             }
         }
         return $this;
+    }
+
+    public function findPin(Pin $pin): ?Pin
+    {
+        if(isset($this->pins[$pin->id])){
+            return $this->pins[$pin->id];
+        }
+        return null;
     }
 }
