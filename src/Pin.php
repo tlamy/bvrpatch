@@ -8,8 +8,7 @@ class Pin
     public string $number;
     public string $name;
     public string $side;
-    public float $originX;
-    public float $originY;
+    public Coordinate $origin;
     public float $radius;
     public ?string $netname = null;
     public ?string $type1 = null;
@@ -21,6 +20,7 @@ class Pin
     public function __construct(
         public string $id,
         public string $partId,
-    ) {
+    )
+    {
     }
 }

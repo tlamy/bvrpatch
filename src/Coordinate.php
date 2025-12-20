@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace Macwake\BvrPatch;
 
-class Coordinate implements \Stringable
+use Stringable;
+
+class Coordinate implements Stringable
 {
     public function __construct(
         public readonly float $x,
@@ -11,10 +13,9 @@ class Coordinate implements \Stringable
     ) {
     }
 
-    public function equals(Coordinate $other): bool
+    public function distance(Coordinate $other): float
     {
-        return abs($this->x - $other->x) < 5
-            && abs($this->y - $other->y) < 5;
+        return hypot($this->x - $other->x, $this->y - $other->y);
     }
 
     public function __toString(): string

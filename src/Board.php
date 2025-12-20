@@ -60,7 +60,7 @@ class Board
                 || count($part->pins) !== count($pins)) {
                 continue;
             }
-            $candidates[$part->name] = $this->distance($part->center, $transform);
+            $candidates[$part->name] = $part->center->distance($transform);
         }
 
         if (empty($candidates)) {
@@ -85,9 +85,4 @@ class Board
     {
         $this->matched[] = $part->name;
     }
-    private function distance(Coordinate $center, Coordinate $transform): float
-    {
-        return hypot($center->x - $transform->x, $center->y - $transform->y);
-    }
-
 }

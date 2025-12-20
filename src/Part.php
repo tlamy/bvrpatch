@@ -53,31 +53,31 @@ class Part
                 $x1 = null;
                 $y1 = null;
                 foreach ($this->pins as $pin) {
-                    if ($x1 === null || $pin->originX < $x1) {
-                        $x1 = $pin->originX;
+                    if ($x1 === null || $pin->origin->x < $x1) {
+                        $x1 = $pin->origin->x;
                     }
-                    if ($y1 === null || $pin->originY < $y1) {
-                        $y1 = $pin->originY;
+                    if ($y1 === null || $pin->origin->y < $y1) {
+                        $y1 = $pin->origin->y;
                     }
-                    if ($x2 === null || $pin->originX > $x2) {
-                        $x2 = $pin->originX;
+                    if ($x2 === null || $pin->origin->x > $x2) {
+                        $x2 = $pin->origin->x;
                     }
-                    if ($y2 === null || $pin->originY > $y2) {
-                        $y2 = $pin->originY;
+                    if ($y2 === null || $pin->origin->y > $y2) {
+                        $y2 = $pin->origin->y;
                     }
                     if ($pin->outline !== null)
                         foreach ($pin->outline as $coord) {
-                            if ($pin->originX + (float)$coord[0] < $x1) {
-                                $x1 = $pin->originX + (float)$coord[0];
+                            if ($pin->origin->x + (float)$coord[0] < $x1) {
+                                $x1 = $pin->origin->x + (float)$coord[0];
                             }
-                            if ($pin->originY + (float)$coord[1] < $y1) {
-                                $y1 = $pin->originY + (float)$coord[1];
+                            if ($pin->origin->y + (float)$coord[1] < $y1) {
+                                $y1 = $pin->origin->y + (float)$coord[1];
                             }
-                            if ($pin->originX + (float)$coord[0] > $x2) {
-                                $x2 = $pin->originX + (float)$coord[0];
+                            if ($pin->origin->x + (float)$coord[0] > $x2) {
+                                $x2 = $pin->origin->x + (float)$coord[0];
                             }
-                            if ($pin->originY + (float)$coord[1] > $y2) {
-                                $y2 = $pin->originY + (float)$coord[1];
+                            if ($pin->origin->y + (float)$coord[1] > $y2) {
+                                $y2 = $pin->origin->y + (float)$coord[1];
                             }
                         }
                 }
@@ -87,10 +87,30 @@ class Part
         return $this;
     }
 
-    public function findPin(Pin $pin): ?Pin
+    public function findPin(Pin $pin, Coordinate $distance): ?Pin
     {
-        if(isset($this->pins[$pin->id])){
-            return $this->pins[$pin->id];
+        echo "Find pin " . $pin->id . " around {$distance}\n";
+        $searchCoords = new Coordinate($this->center->x + $distance->x, $this->center->y + $distance->y);
+        $candidates = [];
+        foreach ($this->pins as $candidate) {
+            $candidates[$candidate->id] = $searchCoords->distance($candidate->origin);
+        }
+        uasort($candidates, static fn(float $a, float $b) => $a <=> $b);
+        $firstIndex = array_key_first($candidates);
+        echo "found $firstIndex\n";
+        return $this->findPinById($firstIndex);
+    }
+
+    private function findPinById(int|string|null $pinId): ?Pin
+    {
+        if ($pinId === null) {
+            echo "No pin id specified.\n";
+            return null;
+        }
+        foreach ($this->pins as $pin) {
+            if ($pin->id === $pinId) {
+                return $pin;
+            }
         }
         return null;
     }

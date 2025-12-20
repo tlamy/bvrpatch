@@ -5,7 +5,7 @@ namespace Macwake\BvrPatch;
 
 use Exception;
 
-class BvrReader
+class Bvr3Format
 {
 
     public function read(string $fileA): Board
@@ -96,8 +96,7 @@ class BvrReader
                         $pin->side = $parts[1];
                         break;
                     case 'PIN_ORIGIN':
-                        $pin->originX = (float)$parts[1];
-                        $pin->originY = (float)$parts[2];
+                        $pin->origin = new Coordinate((float)$parts[1], (float)$parts[2]);
                         break;
                     case 'PIN_RADIUS':
                         $pin->radius = (float)$parts[1];
@@ -135,5 +134,54 @@ class BvrReader
             }
         }
         return $board;
+    }
+
+    public function write(string $filename, Board $board): void
+    {
+        $f = fopen($filename, 'wb');
+        fprintf($f, "BVRAW_FORMAT_3\n");
+        foreach ($board->getParts() as $part) {
+            fprintf($f, "\nPART_NAME %s\n", $part->name);
+            fprintf($f, "   PART_SIDE %s\n", $part->side);
+            fprintf($f, "   PART_ORIGIN %0.3f %0.3f\n", $part->originX, $part->originY);
+            fprintf($f, "   PART_MOUNT %s\n", $part->mount);
+            if ($part->outlineType === 'DISABLE') {
+                fprintf($f, "   PART_OUTLINE_DISABLE\n");
+            } elseif ($part->outlineType === 'SEGMENTS') {
+                fprintf($f, "   PART_OUTLINE_SEGMENTS\n");
+            } elseif ($part->outlineType === 'RELATIVE') {
+                fprintf($f, "   PART_OUTLINE_RELATIVE");
+                foreach ($part->outlineRelative as $coord) {
+                    fprintf($f, " %0.3f %0.3f", $coord[0], $coord[1]);
+                }
+                fprintf($f, "\n");
+            }
+            foreach ($part->pins as $pin) {
+                fprintf($f, "\n   PIN_ID %s\n", $pin->id);
+                fprintf($f, "      PIN_NUMBER %s\n", $pin->number);
+                fprintf($f, "      PIN_NAME %s\n", $pin->name);
+                fprintf($f, "      PIN_SIDE %s\n", $pin->side);
+                fprintf($f, "      PIN_ORIGIN %0.3f %0.3f\n", $pin->origin->x, $pin->origin->y);
+                fprintf($f, "      PIN_RADIUS %0.3f\n", $pin->radius);
+                fprintf($f, "      PIN_NET %s\n", $pin->netname);
+                fprintf($f, "      PIN_TYPE %s\n", $pin->type1);
+                if ($pin->type2 !== null) {
+                    fprintf($f, "      PIN_TYPE %s\n", $pin->type2);
+                }
+                fprintf($f, "      PIN_COMMENT %s\n", $pin->comment);
+                if ($pin->outlineType === 'DISABLE') {
+                    fprintf($f, "      PIN_OUTLINE_DISABLE\n");
+                } elseif ($pin->outlineType === 'RELATIVE') {
+                    fprintf($f, "      PIN_OUTLINE_RELATIVE");
+                    foreach ($pin->outline as $item) {
+                        fprintf($f, " %s", $item);
+                    }
+                    fprintf($f, "\n");
+                }
+                fprintf($f, "   PIN_END\n");
+            }
+            fprintf($f, "PART_END\n");
+        }
+        fclose($f);
     }
 }

@@ -9,11 +9,12 @@ class Application
     private ?string $fileRef = null;
     private ?string $outfile = null;
     private array $references = [];
-    private BvrReader $bvrReader;
+    private Bvr3Format $bvr3Format;
+    private CoordinateTransformation $transformer;
 
     public function __construct()
     {
-        $this->bvrReader = new BvrReader();
+        $this->bvr3Format = new Bvr3Format();
     }
 
     private function usage(string $arg0): void
@@ -55,8 +56,8 @@ class Application
             return 1;
         }
 
-        $orig = $this->bvrReader->read($this->fileOrig);
-        $reference = $this->bvrReader->read($this->fileRef);
+        $orig = $this->bvr3Format->read($this->fileOrig);
+        $reference = $this->bvr3Format->read($this->fileRef);
 
         /** @var list<list<Part>> $refParts */
         $refParts = [];
@@ -82,7 +83,7 @@ class Application
                 echo "{$ref1->name} is at {$ref1->center} - {$ref2->name} is at {$ref2->center}\n";
             }
         }
-        $transformer = new CoordinateTransformation(
+        $this->transformer = new CoordinateTransformation(
             $refParts[0][0]->center,
             $refParts[1][0]->center,
             $refParts[2][0]->center,
@@ -96,27 +97,33 @@ class Application
         $swapSides = $refParts[0][0]->side !== $refParts[0][1]->side;
 
         echo "Orig side = {$refParts[0][0]->side}  Reference side = {$refParts[0][1]->side}\n";
-        print_r($transformer);
+        // print_r($this->transformer);
 
         $netnames = [];
         $resolved = new Board();
         $badParts = $orig->getParts();
         usort($badParts, static fn(Part $a, Part $b) => count($b->pins) <=> count($a->pins));
 
+        $unmatched = [];
         foreach ($badParts as $badPart) {
-            $refLocation = $transformer->transform($badPart->center);
-            echo "Finding match for {$badPart->name} at {$badPart->side}  {$badPart->center} => {$refLocation}\n";
+            $refLocation = $this->transformer->transform($badPart->center);
+            echo "Finding match for {$badPart->name} at {$badPart->side}  {$badPart->center} => {$refLocation}  (" . count(
+                    $badPart->pins
+                ) . " pins)\n";
             $refPart = $reference->findPartByCenter($refLocation, $swapSides ? $this->swapSide($badPart->side) : $badPart->side, $badPart->pins);
-            if ($refPart !== null) {
-                if (count($refPart->pins) !== count($badPart->pins)) {
-                    echo "Part {$badPart->name} has different number of pins\n";
-                } else {
-                    $reference->addMatch($refPart);
-                }
+            if ($refPart !== null && count($refPart->pins) === count($badPart->pins)) {
+                $reference->addMatch($refPart);
                 echo "Found matching part {$badPart->name} => {$refPart->name}  bad side=$badPart->side  ref side=$refPart->side\n";
                 $this->transformNets($badPart, $refPart, $netnames);
+                $resolved->addPart($this->patchPart($badPart, $refPart, $netnames));
+            } else {
+                $unmatched[] = $badPart;
             }
         }
+        foreach ($unmatched as $part) {
+            $resolved->addPart($this->patchPart($part, null, $netnames));
+        }
+        $this->bvr3Format->write($this->outfile, $resolved);
         return 0;
     }
 
@@ -131,16 +138,37 @@ class Application
     private function transformNets(Part $badPart, Part $refPart, array &$netnames): bool
     {
         foreach ($badPart->pins as $pin) {
-            if(($refPin = $refPart->findPin($pin)) !== null) {
+            $badPinDistance = $this->pinPartRelativeDistance($badPart, $pin);
+            if (($refPin = $refPart->findPin($pin, $this->transformer->transform($badPinDistance))) !== null) {
                 if(!isset($netnames[$pin->netname])) {
                     $netnames[$pin->netname] = $refPin->netname;
                 } elseif($netnames[$pin->netname] !== $refPin->netname) {
                     echo "! net name differs {$badPart->name}:{$pin->id} = {$pin->netname}   Reference: {$refPart->name}:{$refPin->id} = {$refPin->netname}   current assigned net = {$netnames[$pin->netname]}\n";
                     return false;
                 }
+            } else {
+                die("{$badPart->name}:{$pin->id} not found\n");
             }
         }
         return true;
     }
 
+    private function pinPartRelativeDistance(Part $part, Pin $pin): Coordinate
+    {
+        return new Coordinate($pin->origin->x - $part->center->x, $pin->origin->y - $part->center->y);
+    }
+
+    private function patchPart(Part $badPart, ?Part $refPart, array $netnames): Part
+    {
+        $patched = clone($badPart);
+        if ($refPart !== null) {
+            $patched->name = $refPart->name;
+        }
+        foreach ($patched->pins as $pin) {
+            if (array_key_exists($pin->netname, $netnames)) {
+                $pin->netname = $netnames[$pin->netname];
+            }
+        }
+        return $patched;
+    }
 }
