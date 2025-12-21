@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace Macwake\BvrPatch;
 
-class Pin
+use Stringable;
+
+class Pin implements Stringable
 {
     public string $number;
     public string $name;
@@ -22,5 +24,10 @@ class Pin
         public string $partId,
     )
     {
+    }
+
+    public function __toString(): string
+    {
+        return "#" . $this->number . " id" . $this->id . " @" . $this->origin . " radius=" . $this->radius;
     }
 }

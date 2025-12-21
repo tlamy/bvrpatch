@@ -8,13 +8,13 @@ use Exception;
 class Bvr3Format
 {
 
-    public function read(string $fileA): Board
+    public function read(string $filename): Board
     {
-        $board = new Board();
+        $board = new Board($filename);
         $part = null;
         $pin = null;
         $state = 'top';
-        foreach (file($fileA) as $lineNo => $line) {
+        foreach (file($filename) as $lineNo => $line) {
             $line = rtrim($line);
             if ($state === 'top' && $line !== '') {
                 if ($line !== 'BVRAW_FORMAT_3') {
@@ -32,6 +32,29 @@ class Bvr3Format
                     $part = new Part(explode(' ', $line)[1]);
                     continue;
                 }
+
+                if (str_starts_with($line, 'OUTLINE_SEGMENTED')) {
+                    $parts = explode(' ', trim($line));
+                    $coords = [];
+                    for ($j = 1, $jMax = count($parts); $j < $jMax; $j += 2) {
+                        $coords[] = new Coordinate((float)$parts[$j], (float)$parts[$j + 1]);
+                    }
+                    $board->outline = $coords;
+                    $board->outlineType = 'SEGMENTS';
+                    continue;
+                }
+                if (str_starts_with($line, 'OUTLINE_POINTS')) {
+                    $parts = explode(' ', trim($line));
+                    $coords = [];
+                    for ($j = 1, $jMax = count($parts); $j < $jMax; $j += 2) {
+                        $coords[] = new Coordinate((float)$parts[$j], (float)$parts[$j + 1]);
+                    }
+                    $board->outline = $coords;
+                    $board->outlineType = 'POINTS';
+                    continue;
+                }
+
+                throw new Exception('Unknown (root) line ' . $lineNo . ': ' . $line);
             }
             if ($state === 'part') {
                 if ($part === null) {
@@ -181,6 +204,13 @@ class Bvr3Format
                 fprintf($f, "   PIN_END\n");
             }
             fprintf($f, "PART_END\n");
+        }
+        if ($board->outline !== null) {
+            fprintf($f, "\nOUTLINE_SEGMENTED");
+            foreach ($board->outline as $coord) {
+                fprintf($f, " %0.3f %0.3f", $coord->x, $coord->y);
+            }
+            fprintf($f, "\n\n");
         }
         fclose($f);
     }

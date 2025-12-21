@@ -12,9 +12,12 @@ class Part
     public string $mount;
     public string $package;
     public string $outlineType;
-    public array $outlineRelative;
+    /** @var array<array{float,float}>|null */
+    public ?array $outlineRelative = null;
     /** @var array<string,Pin> */
     public array $pins = [];
+    // already matched pins
+    private array $matched = [];
 
     public function __construct(
         public string $name,
@@ -89,15 +92,49 @@ class Part
 
     public function findPin(Pin $pin, Coordinate $distance): ?Pin
     {
-        echo "Find pin " . $pin->id . " around {$distance}\n";
         $searchCoords = new Coordinate($this->center->x + $distance->x, $this->center->y + $distance->y);
+        echo "Find pin " . $pin->id . " around {$searchCoords}\n";
         $candidates = [];
         foreach ($this->pins as $candidate) {
-            $candidates[$candidate->id] = $searchCoords->distance($candidate->origin);
+            if (!isset($this->matched[$candidate->id])) {
+                $candidates[$candidate->id] = $searchCoords->distance($candidate->origin);
+            }
         }
         uasort($candidates, static fn(float $a, float $b) => $a <=> $b);
         $firstIndex = array_key_first($candidates);
+        if ($candidates[$firstIndex] > 5) {
+            $matchPin = $this->findPinById($firstIndex);
+            echo "No candidate found within distance (closest is {$candidates[$firstIndex]} orig=" . $pin . "  match=" . $matchPin . ").\n";
+            return null;
+        }
         echo "found $firstIndex\n";
+        $this->matched[$firstIndex] = true;
+        return $this->findPinById($firstIndex);
+    }
+
+    public function findPinAt(Pin $pin, Coordinate $searchCoords, int|float $maxDistance): ?Pin
+    {
+        //$searchCoords = new Coordinate($this->center->x + $distance->x, $this->center->y + $distance->y);
+        echo "Search for pin " . $pin->id . " around {$searchCoords}\n";
+        $candidates = [];
+        foreach ($this->pins as $candidate) {
+            if (!isset($this->matched[$candidate->id])) {
+                $candidates[$candidate->id] = $searchCoords->distance($candidate->origin);
+            }
+        }
+        uasort($candidates, static fn(float $a, float $b) => $a <=> $b);
+//        foreach (array_slice($candidates, 0, 3, true) as $id => $distance) {
+//            $candidatePin = $this->findPinById($id);
+//            echo "Candidate $id: distance $distance at {$candidatePin->origin}\n";
+//        }
+        $firstIndex = array_key_first($candidates);
+        $matchPin = $this->findPinById($firstIndex);
+        if ($candidates[$firstIndex] > $maxDistance) {
+            echo "No candidate found within distance (closest is {$candidates[$firstIndex]} orig=" . $pin . "  match=" . $matchPin . ").\n";
+            return null;
+        }
+        echo "found $firstIndex at {$matchPin?->origin} with distance {$candidates[$firstIndex]}\n";
+        $this->matched[$firstIndex] = true;
         return $this->findPinById($firstIndex);
     }
 

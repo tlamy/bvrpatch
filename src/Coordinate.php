@@ -20,6 +20,6 @@ class Coordinate implements Stringable
 
     public function __toString(): string
     {
-        return sprintf('%d,%d', round($this->x), round($this->y));
+        return sprintf('%0.3f,%0.3f', $this->x, $this->y);
     }
 }

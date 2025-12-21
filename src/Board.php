@@ -5,6 +5,9 @@ namespace Macwake\BvrPatch;
 
 class Board
 {
+    /** @var Coordinate[] */
+    public array $outline = [];
+    public string $outlineType;
     /** @var array<string,Part> */
     private array $parts = [];
     /** @var array<string,Pin> */
@@ -12,6 +15,17 @@ class Board
     /** @var string[] */
     private array $nets = [];
     private array $matched = [];
+    private string $filename;
+
+    public function __construct(string $filename)
+    {
+        $this->filename = basename($filename);
+    }
+
+    public function getFilename(): string
+    {
+        return $this->filename;
+    }
 
     public function addPart(Part $part): void
     {

@@ -16,6 +16,7 @@ class CoordinateTransformation
         Coordinate $b_ref1,
         Coordinate $b_ref2,
         Coordinate $b_ref3,
+        private bool $swapSides
     ) {
         $this->calculateMatrix([$a_ref1, $a_ref2, $a_ref3], [$b_ref1, $b_ref2, $b_ref3]);
     }
@@ -85,5 +86,10 @@ class CoordinateTransformation
             $this->params['a'] * $orig->x + $this->params['b'] * $orig->y + $this->params['c'],
             $this->params['d'] * $orig->x + $this->params['e'] * $orig->y + $this->params['f']
         );
+    }
+
+    public function isSwapSides(): bool
+    {
+        return $this->swapSides;
     }
 }
