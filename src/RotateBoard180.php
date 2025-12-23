@@ -28,8 +28,6 @@ class RotateBoard180
     public function run(array $argv): int
     {
         $sourceFilename = null;
-        $placeFilename = null;
-        $pinsFilename = null;
         $outputFle = null;
         for ($i = 1; isset($argv[$i]); $i++) {
             if ($argv[$i] === "-i") {

@@ -206,7 +206,13 @@ class Bvr3Format
             fprintf($f, "PART_END\n");
         }
         if ($board->outline !== null) {
-            fprintf($f, "\nOUTLINE_SEGMENTED");
+            if ($board->outlineType === 'POINTS') {
+                fprintf($f, "\nOUTLINE_POINTS");
+            } elseif ($board->outlineType === 'SEGMENTS') {
+                fprintf($f, "\nOUTLINE_SEGMENTED");
+            } else {
+                throw new Exception('Unknown outline type ' . $board->outlineType);
+            }
             foreach ($board->outline as $coord) {
                 fprintf($f, " %0.3f %0.3f", $coord->x, $coord->y);
             }

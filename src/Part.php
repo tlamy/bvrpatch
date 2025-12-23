@@ -9,6 +9,8 @@ class Part
     public float $originX;
     public float $originY;
     public Coordinate $center;
+    public Coordinate $boundingBoxMin;
+    public Coordinate $boundingBoxMax;
     public string $mount;
     public string $package;
     public string $outlineType;
@@ -18,6 +20,7 @@ class Part
     public array $pins = [];
     // already matched pins
     private array $matched = [];
+    private string $orientation = '';
 
     public function __construct(
         public string $name,
@@ -51,22 +54,21 @@ class Part
                         $y2 = $coord[1];
                     }
                 }
-                $this->center = new Coordinate(($x1 + $x2) / 2, ($y1 + $y2) / 2);
-            } elseif (count($this->pins) > 0) {
+            } elseif (count($this->pins) > 1) {
                 $x1 = null;
                 $y1 = null;
                 foreach ($this->pins as $pin) {
-                    if ($x1 === null || $pin->origin->x < $x1) {
-                        $x1 = $pin->origin->x;
+                    if ($x1 === null || $pin->origin->x - $pin->radius < $x1) {
+                        $x1 = $pin->origin->x - $pin->radius;
                     }
-                    if ($y1 === null || $pin->origin->y < $y1) {
-                        $y1 = $pin->origin->y;
+                    if ($y1 === null || $pin->origin->y - $pin->radius < $y1) {
+                        $y1 = $pin->origin->y - $pin->radius;
                     }
-                    if ($x2 === null || $pin->origin->x > $x2) {
-                        $x2 = $pin->origin->x;
+                    if ($x2 === null || $pin->origin->x + $pin->radius > $x2) {
+                        $x2 = $pin->origin->x + $pin->radius;
                     }
-                    if ($y2 === null || $pin->origin->y > $y2) {
-                        $y2 = $pin->origin->y;
+                    if ($y2 === null || $pin->origin->y + $pin->radius > $y2) {
+                        $y2 = $pin->origin->y + $pin->radius;
                     }
                     if ($pin->outline !== null)
                         foreach ($pin->outline as $coord) {
@@ -84,7 +86,14 @@ class Part
                             }
                         }
                 }
+            } elseif (count($this->pins) === 1) {
+                $this->center = $this->pins[array_key_first($this->pins)]->origin;
+            }
+            if ($x1 !== null && $y1 !== null && $x2 !== null && $y2 !== null) {
                 $this->center = new Coordinate(($x1 + $x2) / 2, ($y1 + $y2) / 2);
+                $this->boundingBoxMin = new Coordinate($x1, $y1);
+                $this->boundingBoxMax = new Coordinate($x2, $y2);
+                $this->orientation = $x2 - $x1 > $y2 - $y1 ? 'H' : 'V';
             }
         }
         return $this;
@@ -123,14 +132,10 @@ class Part
             }
         }
         uasort($candidates, static fn(float $a, float $b) => $a <=> $b);
-//        foreach (array_slice($candidates, 0, 3, true) as $id => $distance) {
-//            $candidatePin = $this->findPinById($id);
-//            echo "Candidate $id: distance $distance at {$candidatePin->origin}\n";
-//        }
         $firstIndex = array_key_first($candidates);
         $matchPin = $this->findPinById($firstIndex);
         if ($candidates[$firstIndex] > $maxDistance) {
-            echo "No candidate found within distance (closest is {$candidates[$firstIndex]} orig=" . $pin . "  match=" . $matchPin . ").\n";
+            echo "No candidate found within distance (closest is {$candidates[$firstIndex]} orig=" . $pin . "  match=" . $matchPin . "  maxD=$maxDistance).\n";
             return null;
         }
         echo "found $firstIndex at {$matchPin?->origin} with distance {$candidates[$firstIndex]}\n";
@@ -150,5 +155,13 @@ class Part
             }
         }
         return null;
+    }
+
+    /**
+     * @return 'H'|'V'
+     */
+    public function getOrientation(): string
+    {
+        return $this->orientation;
     }
 }

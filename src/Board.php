@@ -99,4 +99,15 @@ class Board
     {
         $this->matched[] = $part->name;
     }
+
+    public function transformNet(Netname $netname): void
+    {
+        foreach ($this->parts as $part) {
+            foreach ($part->pins as $pin) {
+                if ($pin->netname === $netname->origName) {
+                    $pin->netname = $netname->newName;
+                }
+            }
+        }
+    }
 }

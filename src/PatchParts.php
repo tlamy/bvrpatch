@@ -12,6 +12,7 @@ class PatchParts
     private ?CoordinateTransformation $pinTransformer = null;
     /** @var array<string,Netname> */
     private array $netnames = [];
+    private array $newNets = [];
 
     public function __construct()
     {
@@ -67,14 +68,12 @@ class PatchParts
 
         $orig = $this->bvr3Format->read($sourceFilename);
         $placeRef = $this->bvr3Format->read($placeFilename);
-        $pinRef = $pinsFilename !== null
-            ? $this->bvr3Format->read($pinsFilename) : null;
+        $pinRef = $pinsFilename !== null ? $this->bvr3Format->read($pinsFilename) : null;
 
         $this->transformer = $this->buildTransformationMatrix($orig, $placeRef, $referenceOpt, false);
         if ($pinRef !== null) {
             $this->pinTransformer = $this->buildTransformationMatrix($placeRef, $pinRef, $referenceOpt, true);
         }
-        // print_r($this->transformer);
 
         $resolved = new Board($outputFle);
         $badParts = $orig->getParts();
@@ -83,27 +82,35 @@ class PatchParts
         $unmatched = [];
         foreach ($badParts as $badPart) {
             $refLocation = $this->transformer->transform($badPart->center);
-            echo "Finding match for {$badPart->name} at {$badPart->side}  {$badPart->center} => {$refLocation}  (" . count(
-                    $badPart->pins
-                ) . " pins)\n";
+            echo "Finding match for {$badPart->name} at {$badPart->side}  {$badPart->center} => {$refLocation}  (" .
+                count($badPart->pins) . " pins)\n";
             $refPart = $placeRef->findPartByCenter(
                 $refLocation,
                 $this->transformer->isSwapSides() ? $this->swapSide($badPart->side) : $badPart->side,
                 $badPart->pins
             );
-            if ($refPart !== null && count($refPart->pins) === count($badPart->pins)) {
+            if ($refPart !== null && count($refPart->pins) === count($badPart->pins) && $badPart->getOrientation(
+                ) === $refPart->getOrientation()) {
                 $placeRef->addMatch($refPart);
-                echo "Found matching part {$badPart->name} => {$refPart->name}  orig side=$badPart->side  ref side=$refPart->side\n";
-                if ($pinRef !== null && ($pinPart = $pinRef->findPart($refPart->name)) !== null) {
-                    $this->transformNets($badPart, $refPart, $pinPart);
+                echo "(1)Found matching part {$badPart->name} => {$refPart->name}  orig side=$badPart->side  ref side=$refPart->side\n";
+                if (
+                    $pinRef !== null
+                    && ($pinPart = $pinRef->findPart($refPart->name)) !== null
+                    && count($pinPart->pins) === count($refPart->pins)
+                    && $badPart->getOrientation() === $pinPart->getOrientation()
+                ) {
+                    echo "Found matching pin-ref part {$refPart->name} => {$pinPart->name}\n";
+                    $this->matchPins($badPart, $refPart, $pinPart, $orig);
                 } else {
-                    $this->transformNets($badPart, $refPart, null);
+                    echo "No matching pin-ref part {$refPart->name}\n";
+                    $this->matchPins($badPart, $refPart, null, $orig);
                 }
                 $resolved->addPart($this->patchPart($badPart, $refPart));
-            } elseif (($ref2Part = $pinRef?->findPart($badPart->name)) !== null) {
+            } elseif (($ref2Part = $pinRef?->findPart($badPart->name)) !== null
+                && $badPart->getOrientation() === $ref2Part->getOrientation()) {
                 $placeRef->addMatch($ref2Part);
-                echo "Found matching part {$badPart->name} => {$ref2Part->name}  orig side=$badPart->side  ref side=$ref2Part->side\n";
-                $this->transformNets($badPart, $ref2Part, null);
+                echo "(2)Found matching part {$badPart->name} => {$ref2Part->name}  orig side=$badPart->side  ref side=$ref2Part->side\n";
+                $this->matchPins($badPart, $ref2Part, null, $orig);
                 $resolved->addPart($this->patchPart($badPart, $ref2Part));
             } else {
                 $unmatched[] = $badPart;
@@ -112,6 +119,8 @@ class PatchParts
         foreach ($unmatched as $part) {
             $resolved->addPart($this->patchPart($part, null));
         }
+        $resolved->outlineType = $orig->outlineType;
+        $resolved->outline = $orig->outline;
         $this->bvr3Format->write($outputFle, $resolved);
         return 0;
     }
@@ -121,21 +130,57 @@ class PatchParts
         return $side === 'T' ? 'B' : 'T';
     }
 
-    private function transformNets(Part $badPart, Part $refPart, ?Part $pinPart): bool
+    private function matchPins(Part $origPart, Part $refPart, ?Part $pinPart, Board $origBoard): bool
     {
-        $minX = null;
-        $maxY = null;
         $lastX = null;
         $lastY = null;
         $pitchX = null;
         $pitchY = null;
-        foreach ($badPart->pins as $pin) {
-            $origPinDistance = $this->pinPartRelativeDistance($badPart, $pin);
-            $refPincoords = $this->pinLocation($refPart->center, $this->transformer->transform($origPinDistance));
+        foreach ($origPart->pins as $pin) {
+            if ($pin->netname === 'GND' || $pin->netname === 'NC') {
+                continue;
+            }
+            if (in_array($pin->netname, array_map(fn(Netname $net) => $net->newName, $this->netnames))) {
+                continue;
+            }
+            $pinOffset = $this->pinPartRelativeDistance($origPart, $pin);
+            $refPincoords = $this->pinLocation($refPart->center, $pinOffset);
+            if ($pinPart !== null) {
+                $pinPinCoords = $this->pinLocation($pinPart->center, $pinOffset);
+                if (($pinPin = $pinPart->findPinAt($pin, $pinPinCoords, $pitchX ?? 10)) !== null) {
+                    echo "Found on PIN board: {$origPart->name}:{$pin->id} D={$pinOffset} C={$pin->origin} => {$pinPinCoords} {$pinPin->origin} = {$pinPin->name}:{$pinPin->id}\n";
+                    $refPin = $pinPart?->pins[$pinPin->id];
+
+                    if (!isset($this->netnames[$pin->netname])) {
+                        $this->assignNetwork($pin, $refPin, $origBoard);
+                    } elseif ($this->netnames[$pin->netname]->newName !== $refPin->netname) {
+                        if ($this->isToleratedNetChange($this->netnames[$pin->netname]->newName, $refPin->netname)) {
+                            continue;
+                        }
+                        if (!str_ends_with($this->netnames[$pin->netname]->newName, '_XW')) {
+                            die (
+                                __LINE__ . "! net name differs {$origPart->name}:{$pin->id} = {$pin->netname}   Reference: {$refPart->name}:{$refPin->id} = {$refPin->netname}   current assigned net = " . json_encode(
+                                    $this->netnames[$pin->netname]
+                                ) . "\n"
+                            );
+                            return false;
+                        } else {
+                            $this->assignNetworkName(
+                                $this->netnames[$pin->netname]->newName,
+                                $refPin->netname,
+                                $this->netnames[$pin->netname]->origPinId,
+                                $this->netnames[$pin->netname]->refPinId,
+                                $origBoard
+                            );
+                        }
+                    }
+                    continue;
+                }
+            }
             $refPinOrig = $this->transformer->transform($pin->origin);
-            echo "{$badPart->name}:{$pin->id} {$origPinDistance} => {$refPincoords} {$refPinOrig}\n";
+            echo "{$origPart->name}:{$pin->id} {$pinOffset} => {$refPincoords} {$refPinOrig}\n";
             //if (($refPin = $refPart->findPin($pin, $this->transformer->transform($origPinDistance))) !== null) {
-            if (($refPin = $refPart->findPinAt($pin, $refPincoords, $pitchX ?? 10)) !== null) {
+            if (($refPin = $refPart->findPinAt($pin, $refPinOrig, $pitchX ?? 20)) !== null) {
                 if ($lastX === null) {
                     $lastX = $refPin->origin->x;
                     $lastY = $refPin->origin->y;
@@ -155,20 +200,24 @@ class PatchParts
                 } else {
                     echo "No pin on pin-ref board\n";
                 }
+                $this->assignNetwork($pin, $refPin, $origBoard);
                 if (!isset($this->netnames[$pin->netname])) {
                     $this->netnames[$pin->netname] = new Netname(
                         $pin->netname, $refPin->netname, $pin->id, $refPin->id
                     );
                 } elseif ($this->netnames[$pin->netname]->newName !== $refPin->netname) {
+                    if ($this->isToleratedNetChange($this->netnames[$pin->netname]->newName, $refPin->netname)) {
+                        continue;
+                    }
                     die (
-                        "! net name differs {$badPart->name}:{$pin->id} = {$pin->netname}   Reference: {$refPart->name}:{$refPin->id} = {$refPin->netname}   current assigned net = " . json_encode(
+                        __LINE__ . "! net name differs {$origPart->name}:{$pin->id} = {$pin->netname}   Reference: {$refPart->name}:{$refPin->id} = {$refPin->netname}   current assigned net = " . json_encode(
                             $this->netnames[$pin->netname]
                         ) . "\n"
                     );
                     return false;
                 }
             } else {
-                die("{$badPart->name}:{$pin->id} not found\n");
+                die("{$origPart->name}:{$pin->id} not found\n");
                 return false;
             }
         }
@@ -232,7 +281,7 @@ class PatchParts
 
     private function roundPitch(float $distance, int $pitch): float
     {
-        return round($distance / $pitch) * $pitch;
+        return abs(round($distance / $pitch) * $pitch);
     }
 
     private function pinPartRelativeDistance(Part $part, Pin $pin): Coordinate
@@ -245,5 +294,49 @@ class PatchParts
     private function pinLocation(Coordinate $partCenter, Coordinate $delta): Coordinate
     {
         return new Coordinate($partCenter->x + $delta->x, $partCenter->y + $delta->y);
+    }
+
+    public function assignNetwork(Pin $pin, Pin $refPin, Board $origBoard): void
+    {
+        if ($pin->netname === $refPin->netname) {
+            return;
+        }
+        if (isset($this->newNets[$refPin->netname])) {
+            return;
+        }
+        $this->netnames[$pin->netname] = new Netname(
+            $pin->netname, $refPin->netname, $pin->id, $refPin->id
+        );
+        $origBoard->transformNet($this->netnames[$pin->netname]);
+        $this->newNets[$refPin->netname] = true;
+    }
+
+    private function assignNetworkName(
+        ?string $netname,
+        string $newName,
+        string $origPinId,
+        string $refPinId,
+        Board $origBoard
+    ) {
+        if ($netname === $newName) {
+            return;
+        }
+        if (isset($this->newNets[$newName])) {
+            return;
+        }
+        $this->netnames[$netname] = new Netname($netname, $newName, $origPinId, $refPinId);
+        $origBoard->transformNet($this->netnames[$netname]);
+        $this->newNets[$newName] = true;
+    }
+
+    private function isToleratedNetChange(string $netname, string $newName): bool
+    {
+        echo "compare $netname to $newName\n";
+        return str_starts_with($netname, 'PP') && str_starts_with($newName, 'PP')
+            || preg_match('/^SPKRAMP_[A-F]_PVDD_SNS$/', $netname) > 0 && preg_match(
+                '/^PPBUS_AON_[RL]_SPKRAMP$/',
+                $newName
+            ) > 0
+            || preg_match('/^PPBUS_AON$/', $netname) > 0 && preg_match('/^PP*BUS_.*/', $newName) > 0;
     }
 }
