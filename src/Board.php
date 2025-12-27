@@ -8,7 +8,7 @@ class Board
     /** @var Coordinate[] */
     public array $outline = [];
     public string $outlineType;
-    /** @var array<string,Part> */
+    /** @var array<string,Part> indexed by part name */
     private array $parts = [];
     /** @var array<string,Pin> */
     private array $pins = [];
@@ -109,5 +109,53 @@ class Board
                 }
             }
         }
+    }
+
+    /**
+     * @param Part[] $candidates
+     */
+    public function findPartByNetnames(Part $part, array $candidates): ?Part
+    {
+        // Filter target pins to only those with "known" netnames
+        /** @var Pin[] $targetPinsToMatch */
+        $targetPinsToMatch = array_filter(
+            $part->pins,
+            static function (Pin $pin) {
+                return $pin->netname !== null && !str_starts_with($pin->netname, 'Net');
+            }
+        );
+
+        if (empty($targetPinsToMatch)) {
+            return null;
+        }
+
+        foreach ($candidates as $candidate) {
+            $isMatch = true;
+            foreach ($targetPinsToMatch as $targetPin) {
+                // Find the corresponding pin on the candidate by pin number
+                $candidatePin = null;
+                foreach ($candidate->pins as $cp) {
+                    if ($cp->number === $targetPin->number) {
+                        $candidatePin = $cp;
+                        break;
+                    }
+                }
+
+                if ($candidatePin === null || $candidatePin->netname !== $targetPin->netname) {
+                    $isMatch = false;
+                    break;
+                }
+            }
+
+            if ($isMatch) {
+                return $candidate;
+            }
+        }
+        return null;
+    }
+
+    public function hasPart(string $name): bool
+    {
+        return array_key_exists($name, $this->parts);
     }
 }

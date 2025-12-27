@@ -124,7 +124,7 @@ class Part
     public function findPinAt(Pin $pin, Coordinate $searchCoords, int|float $maxDistance): ?Pin
     {
         //$searchCoords = new Coordinate($this->center->x + $distance->x, $this->center->y + $distance->y);
-        echo "Search for pin " . $pin->id . " around {$searchCoords}\n";
+        echo "Search for pin " . $pin->id . " (" . $pin->netname . ") around {$searchCoords}\n";
         $candidates = [];
         foreach ($this->pins as $candidate) {
             if (!isset($this->matched[$candidate->id])) {
@@ -133,12 +133,13 @@ class Part
         }
         uasort($candidates, static fn(float $a, float $b) => $a <=> $b);
         $firstIndex = array_key_first($candidates);
+        if ($firstIndex === null) return null;
         $matchPin = $this->findPinById($firstIndex);
         if ($candidates[$firstIndex] > $maxDistance) {
             echo "No candidate found within distance (closest is {$candidates[$firstIndex]} orig=" . $pin . "  match=" . $matchPin . "  maxD=$maxDistance).\n";
             return null;
         }
-        echo "found $firstIndex at {$matchPin?->origin} with distance {$candidates[$firstIndex]}\n";
+        echo "found $firstIndex ({$matchPin?->netname}) at {$matchPin?->origin} with distance {$candidates[$firstIndex]}\n";
         $this->matched[$firstIndex] = true;
         return $this->findPinById($firstIndex);
     }

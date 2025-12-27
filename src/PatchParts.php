@@ -9,7 +9,6 @@ class PatchParts
 {
     private Bvr3Format $bvr3Format;
     private CoordinateTransformation $transformer;
-    private ?CoordinateTransformation $pinTransformer = null;
     /** @var array<string,Netname> */
     private array $netnames = [];
     private array $newNets = [];
@@ -71,15 +70,15 @@ class PatchParts
         $pinRef = $pinsFilename !== null ? $this->bvr3Format->read($pinsFilename) : null;
 
         $this->transformer = $this->buildTransformationMatrix($orig, $placeRef, $referenceOpt, false);
-        if ($pinRef !== null) {
-            $this->pinTransformer = $this->buildTransformationMatrix($placeRef, $pinRef, $referenceOpt, true);
-        }
 
         $resolved = new Board($outputFle);
         $badParts = $orig->getParts();
         usort($badParts, static fn(Part $a, Part $b) => count($b->pins) <=> count($a->pins));
 
+        /** @var Part[] $unmatched */
         $unmatched = [];
+        /** @var string[] $matched */
+        $matched = [];
         foreach ($badParts as $badPart) {
             $refLocation = $this->transformer->transform($badPart->center);
             echo "Finding match for {$badPart->name} at {$badPart->side}  {$badPart->center} => {$refLocation}  (" .
@@ -115,6 +114,21 @@ class PatchParts
             } else {
                 $unmatched[] = $badPart;
             }
+        }
+        echo "Start matching by pins and know nets...\n";
+        // Most parts are matched and have proper nets assigned.
+        foreach ($unmatched as $index => $part) {
+            if (($pinPart = $this->findPartByPins($part, $pinRef, $resolved)) !== null) {
+                echo "P2: Found matching pin-ref part {$part->name} => {$pinPart->name}\n";
+                $resolved->addPart($this->patchPart($part, $pinPart));
+                unset($unmatched[$index]);
+            } elseif (($pinPart = $this->findPartByPins($part, $placeRef, $resolved)) !== null) {
+                echo "P2: Found matching place-ref part {$part->name} => {$pinPart->name}\n";
+                $resolved->addPart($this->patchPart($part, $pinPart));
+                unset($unmatched[$index]);
+            }
+
+            echo "Still unmatched parts: " . count($unmatched) . " :-/\n";
         }
         foreach ($unmatched as $part) {
             $resolved->addPart($this->patchPart($part, null));
@@ -164,15 +178,15 @@ class PatchParts
                                 ) . "\n"
                             );
                             return false;
-                        } else {
-                            $this->assignNetworkName(
-                                $this->netnames[$pin->netname]->newName,
-                                $refPin->netname,
-                                $this->netnames[$pin->netname]->origPinId,
-                                $this->netnames[$pin->netname]->refPinId,
-                                $origBoard
-                            );
                         }
+
+                        $this->assignNetworkName(
+                            $this->netnames[$pin->netname]->newName,
+                            $refPin->netname,
+                            $this->netnames[$pin->netname]->origPinId,
+                            $this->netnames[$pin->netname]->refPinId,
+                            $origBoard
+                        );
                     }
                     continue;
                 }
@@ -332,11 +346,221 @@ class PatchParts
     private function isToleratedNetChange(string $netname, string $newName): bool
     {
         echo "compare $netname to $newName\n";
-        return str_starts_with($netname, 'PP') && str_starts_with($newName, 'PP')
-            || preg_match('/^SPKRAMP_[A-F]_PVDD_SNS$/', $netname) > 0 && preg_match(
-                '/^PPBUS_AON_[RL]_SPKRAMP$/',
-                $newName
-            ) > 0
-            || preg_match('/^PPBUS_AON$/', $netname) > 0 && preg_match('/^PP*BUS_.*/', $newName) > 0;
+        return (str_starts_with($netname, 'PP') && str_starts_with($newName, 'PP'))
+            || (preg_match('/^SPKRAMP_[A-F]_PVDD_SNS$/', $netname) > 0 && preg_match(
+                    '/^PPBUS_AON_[RL]_SPKRAMP$/',
+                    $newName
+                ) > 0)
+            || ($netname === "PPBUS_AON" && preg_match('/^PP*BUS_.*/', $newName) > 0);
     }
+
+
+    public function findPartByPins(Part $part, Board $refBoard, Board $resolved): ?Part
+    {
+        if (count($part->pins) === 1) {
+            return null;
+        }
+        $candidates = array_filter(
+            $refBoard->getParts(),
+            static function (Part $candidate) use ($part, $resolved) {
+                return count($candidate->pins) === count($part->pins)
+                    && !$resolved->hasPart($candidate->name)
+                    && !str_starts_with($candidate->name, 'XW');
+            }
+        );
+        echo "Found " . count($candidates) . " candidates for {$part->name}\n";
+        if (count($candidates) === 0) {
+            return null;
+        }
+        if (count($candidates) > 1) {
+            if (($refPart = $refBoard->findPartByNetnames($part, $candidates)) === null) {
+                return null;
+            }
+            $origPins = array_values($part->pins);
+            $refPins = array_values($refPart->pins);
+            $pinsMatch = true;
+            foreach ($origPins as $idx => $origPin) {
+                $refPin = $refPins[$idx];
+                if ($origPin->netname !== $refPin->netname && !str_starts_with($origPin->netname, 'Net')) {
+                    $pinsMatch = false;
+                    echo "{$part->name}/{$refPart->name}: Net mismatch: {$origPin->netname} != {$refPin->netname}\n";
+                    break;
+                }
+            }
+            if ($pinsMatch) {
+                echo "{$part->name}/{$refPart->name}: Replacing net names\n";
+                foreach ($origPins as $idx => $origPin) {
+                    $refPin = $refPins[$idx];
+                    if ($origPin->netname !== $refPin->netname && str_starts_with($origPin->netname, 'Net')) {
+                        $resolved->transformNet(
+                            new Netname($origPin->netname, $refPin->netname, $origPin->id, $refPin->id)
+                        );
+                    }
+                }
+                return $refPart;
+            }
+            return null;
+        }
+
+        $refPart = array_values($candidates)[0];
+        if (!$this->walkPinsReplaceNets($part, $refPart, $resolved)) return null;
+        // validate refPart pins
+        return $refPart;
+    }
+
+    /**
+     * @param Part[] $candidates
+     */
+    private function findPartByNetnames(Part $part, array $candidates): ?Part
+    {
+        // Filter target pins to only those with "known" netnames
+        /** @var Pin[] $targetPinsToMatch */
+        $targetPinsToMatch = array_filter(
+            $part->pins,
+            static function (Pin $pin) {
+                return $pin->netname !== null && !str_starts_with($pin->netname, 'Net');
+            }
+        );
+
+        if (empty($targetPinsToMatch)) {
+            return null;
+        }
+
+        foreach ($candidates as $candidate) {
+            $isMatch = true;
+            foreach ($targetPinsToMatch as $targetPin) {
+                // Find the corresponding pin on the candidate by pin number
+                $candidatePin = null;
+                foreach ($candidate->pins as $cp) {
+                    if ($cp->number === $targetPin->number) {
+                        $candidatePin = $cp;
+                        break;
+                    }
+                }
+
+                if ($candidatePin === null || $candidatePin->netname !== $targetPin->netname) {
+                    $isMatch = false;
+                    break;
+                }
+            }
+
+            if ($isMatch) {
+                return $candidate;
+            }
+        }
+        return null;
+    }
+
+    public function walkPinsReplaceNets(Part $orig, Part $refPart, Board $board): bool
+    {
+        // find pin 1
+        /** @var Pin|null $origPin1 */
+        $origPin1 = array_values(
+            array_filter(
+                $orig->pins,
+                static function (Pin $pin) {
+                    return (string)$pin->number === '1';
+                }
+            )
+        )[0] ?? null;
+        /** @var Pin|null $refPin1 */
+        $refPin1 = array_values(
+            array_filter(
+                $refPart->pins,
+                static function (Pin $pin) {
+                    return (string)$pin->number === '1';
+                }
+            )
+        )[0] ?? null;
+        if ($origPin1 === null) {
+            echo "Pin 1 not found in {$orig->name}";
+            return $this->shapeMatch($orig, $refPart, $board);
+        }
+        if ($refPin1 === null) {
+            echo "Pin 1 not found in {$refPart->name}";
+            return $this->shapeMatch($orig, $refPart, $board);
+        }
+        $o1distance = $orig->center->sub($origPin1->origin);
+        $r1distance = $refPart->center->sub($refPin1->origin);
+        if ($o1distance->distance($r1distance) > 10) {
+            echo "{$orig->name}/{$refPart->name}: Pin 1 is different; trying shape matching\n";
+            return $this->shapeMatch($orig, $refPart, $board);
+        }
+        // calculate pin 2 offset
+        $origPins = array_values($orig->pins);
+        $refPins = array_values($refPart->pins);
+        echo "{$orig->name}/{$refPart->name}: Replacing net names (3)\n";
+        foreach ($origPins as $idx => $origPin) {
+            $distanceFromPin1 = $origPin1->origin->sub($origPin->origin);
+            echo "Orig: {$origPin->name} => {$origPin->origin}   Dist: {$distanceFromPin1}\n";
+            $refPinLocation = $refPin1->origin->sub($distanceFromPin1);
+            $ref1PinDistance = $refPin1->origin->sub($refPinLocation);
+            echo "Ref: {$refPinLocation} is {$ref1PinDistance} from pin1 at {$refPin1}\n";
+            $refPin = $refPart->findPinAt($origPin, $refPinLocation, $origPin->radius);
+            if ($refPin === null) {
+                print("Pin {$origPin->name} not found in {$refPart->name}\n");
+                return $this->shapeMatch($orig, $refPart, $board);
+            }
+            if ($origPin->netname !== $refPin->netname && str_starts_with($origPin->netname, 'Net')) {
+                $board->transformNet(
+                    new Netname($origPin->netname, $refPin->netname, $origPin->id, $refPin->id)
+                );
+            }
+        }
+        return true;
+    }
+
+    private function shapeMatch(Part $orig, Part $refPart, Board $resolved): bool
+    {
+        echo "Shape matching {$orig->name} to {$refPart->name} using center-relative vectors\n";
+
+        $matchedPairs = [];
+        foreach ($orig->pins as $oPin) {
+            // Calculate vector from original center to pin
+            $vectorX = $oPin->origin->x - $orig->center->x;
+            $vectorY = $oPin->origin->y - $orig->center->y;
+
+            // Project this vector onto the reference part center
+            $targetCoords = new Coordinate($refPart->center->x + $vectorX, $refPart->center->y + $vectorY);
+
+            // Find the closest pin on the reference part (with 2.0 tolerance)
+            $rPin = $refPart->findPinAt($oPin, $targetCoords, $oPin->radius * 1.5);
+
+            if ($rPin === null) {
+                echo "Shape mismatch: Pin {$oPin->id} of {$orig->name} has no counterpart in {$refPart->name} at relative position.";
+                return false;
+            }
+            $matchedPairs[] = ['orig' => $oPin, 'ref' => $rPin];
+        }
+
+        // Validation: Ensure all GND pins in the mapping actually have the 'GND' netname on both sides
+        foreach ($matchedPairs as $pair) {
+            /** @var Pin $oPin */
+            $oPin = $pair['orig'];
+            /** @var Pin $rPin */
+            $rPin = $pair['ref'];
+
+            if ($oPin->netname === 'GND' && $rPin->netname !== 'GND') {
+                echo "Validation failed: GND pin {$oPin->id} mapped to non-GND net {$rPin->netname} in {$refPart->name}";
+                return false;
+            }
+        }
+
+        echo "Shape validation passed! Mapping nets...\n";
+        foreach ($matchedPairs as $pair) {
+            /** @var Pin $oPin */
+            $oPin = $pair['orig'];
+            /** @var Pin $rPin */
+            $rPin = $pair['ref'];
+
+            if ($oPin->netname !== $rPin->netname && str_starts_with($oPin->netname, 'Net')) {
+                echo "  Mapping {$oPin->netname} -> {$rPin->netname}\n";
+                $resolved->transformNet(
+                    new Netname($oPin->netname, $rPin->netname, $oPin->id, $rPin->id)
+                );
+            }
+        }
+        return true;
+    }
+
 }

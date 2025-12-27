@@ -22,4 +22,17 @@ class Coordinate implements Stringable
     {
         return sprintf('%0.3f,%0.3f', $this->x, $this->y);
     }
+
+    public function sub(Coordinate $origin): Coordinate
+    {
+        return new Coordinate($this->x - $origin->x, $this->y - $origin->y);
+    }
+
+    public function add(Coordinate $distance): Coordinate
+    {
+        return new Coordinate(
+            $this->x + $distance->x,
+            $this->y + $distance->y
+        );
+    }
 }
